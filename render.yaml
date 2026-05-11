@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: zyn-scanner
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    envVars:
+      - key: PORT
+        value: "5050"
