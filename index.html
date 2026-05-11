@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Zyn Scanner</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#000;color:#fff;font-family:-apple-system,sans-serif;height:100dvh}
+
+/* LOGIN */
+#login{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#0a0a0a;z-index:100}
+#login>div{width:90%;max-width:360px;padding:30px 24px;background:#1a1a1a;border-radius:16px;text-align:center}
+#login h2{font-size:24px;margin-bottom:8px}
+#login p{color:#888;font-size:14px;margin-bottom:24px}
+#login input{width:100%;padding:14px;margin-bottom:12px;background:#2a2a2a;border:1px solid #333;border-radius:10px;color:#fff;font-size:16px;outline:none}
+#login input:focus{border-color:#00ff88}
+#login button{width:100%;padding:14px;background:#00ff88;color:#000;border:none;border-radius:10px;font-size:16px;font-weight:700;cursor:pointer;margin-top:8px}
+#login button:disabled{opacity:.5}
+#login .err{color:#ff5555;font-size:13px;margin-top:12px;min-height:20px}
+
+/* SCANNER */
+#scanner{display:none;position:fixed;inset:0}
+#scanner.active{display:block}
+#cam{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+#overlay{position:absolute;inset:0;pointer-events:none;z-index:5}
+#viewfinder{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:250px;height:250px;border:2px solid rgba(0,255,136,.7);border-radius:16px;box-shadow:0 0 0 9999px rgba(0,0,0,.45)}
+#scanline{position:absolute;top:0;left:5%;width:90%;height:2px;background:#00ff88;box-shadow:0 0 8px #00ff88;animation:scan 2s ease-in-out infinite}
+@keyframes scan{0%,100%{top:5%}50%{top:92%}}
+#counter{position:absolute;top:16px;right:16px;z-index:10;background:rgba(0,0,0,.75);padding:8px 16px;border-radius:20px;font-size:15px;font-weight:600;backdrop-filter:blur(10px)}
+#status{position:absolute;top:60px;left:50%;transform:translateX(-50%);z-index:10;color:rgba(255,255,255,.5);font-size:13px;text-align:center}
+#flash{position:absolute;inset:0;pointer-events:none;z-index:8;transition:opacity .15s;opacity:0}
+#flash.green{background:#00ff88;opacity:.6}
+#flash.yellow{background:#ffaa00;opacity:.4}
+#flash.red{background:#ff3333;opacity:.4}
+#toast{position:absolute;bottom:160px;left:50%;transform:translateX(-50%);z-index:20;padding:14px 28px;border-radius:30px;font-size:17px;font-weight:700;opacity:0;transition:opacity .2s;white-space:nowrap;backdrop-filter:blur(10px)}
+#toast.ok{background:rgba(0,255,136,.25);color:#00ff88;opacity:1}
+#toast.err{background:rgba(255,51,51,.25);color:#ff5555;opacity:1}
+#toast.warn{background:rgba(255,170,0,.25);color:#ffaa00;opacity:1}
+#loading{position:absolute;inset:0;z-index:15;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.4)}
+#loading.show{display:flex}
+.spinner{width:40px;height:40px;border:3px solid rgba(255,255,255,.2);border-top-color:#00ff88;border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+#logout{position:absolute;bottom:40px;left:50%;transform:translateX(-50%);z-index:10;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);padding:8px 24px;border-radius:20px;font-size:13px;color:#fff;cursor:pointer}
+</style>
+</head>
+<body>
+<div id="login">
+<div>
+<h2>🔐 Zyn Scanner</h2>
+<p>Log in with your Zyn Rewards account</p>
+<input type="email" id="email" placeholder="Email" autocomplete="email">
+<input type="password" id="pass" placeholder="Password" autocomplete="current-password">
+<button id="loginBtn" onclick="doLogin()">Log In</button>
+<div class="err" id="loginErr"></div>
+</div>
+</div>
+<div id="scanner">
+<video id="cam" autoplay playsinline muted></video>
+<div id="overlay"><div id="viewfinder"><div id="scanline"></div></div></div>
+<div id="flash"></div>
+<div id="counter">0</div>
+<div id="status"></div>
+<div id="toast"></div>
+<div id="loading"><div class="spinner"></div></div>
+<button id="logout" onclick="logout()">↩ Logout</button>
+</div>
+<script src="https://unpkg.com/jsqr@1.4.0/dist/jsQR.js"></script>
+<script>
+let userId=localStorage.getItem('zyn_uid')||'',count=0,scanning=true,cooldown=false;
+const COOLDOWN=2500,canvas=document.createElement('canvas'),ctx=canvas.getContext('2d');
+
+if(userId)checkSession();
+
+async function checkSession(){
+try{const r=await fetch('/api/status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:userId})});const d=await r.json();if(d.logged_in)showScanner()}catch(e){}
+}
+
+async function doLogin(){
+const email=document.getElementById('email').value.trim(),pass=document.getElementById('pass').value;
+const btn=document.getElementById('loginBtn'),err=document.getElementById('loginErr');
+if(!email||!pass){err.textContent='Enter email and password';return}
+btn.disabled=true;btn.textContent='Logging in...';err.textContent='';
+try{
+const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password:pass})});
+const d=await r.json();
+if(d.success){userId=d.user_id;localStorage.setItem('zyn_uid',userId);showScanner()}
+else err.textContent=d.message||'Login failed';
+}catch(e){err.textContent='Connection error'}
+btn.disabled=false;btn.textContent='Log In';
+}
+
+async function showScanner(){
+document.getElementById('login').style.display='none';document.getElementById('scanner').classList.add('active');
+try{const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment',width:{ideal:1280},height:{ideal:720}}});document.getElementById('cam').srcObject=s;document.getElementById('cam').onloadedmetadata=()=>{document.getElementById('status').textContent='Point at Zyn QR code';scanLoop()}}catch(e){document.getElementById('status').textContent='Camera denied'}
+}
+
+function logout(){userId='';count=0;localStorage.removeItem('zyn_uid');document.getElementById('scanner').classList.remove('active');document.getElementById('login').style.display='flex';const cam=document.getElementById('cam');if(cam.srcObject){cam.srcObject.getTracks().forEach(t=>t.stop());cam.srcObject=null}scanning=false}
+
+function scanLoop(){const cam=document.getElementById('cam');if(cam.readyState!==4){requestAnimationFrame(scanLoop);return}canvas.width=cam.videoWidth;canvas.height=cam.videoHeight;ctx.drawImage(cam,0,0);if(scanning&&!cooldown){const d=ctx.getImageData(0,0,canvas.width,canvas.height);const code=jsQR(d.data,canvas.width,canvas.height,{inversionAttempts:'dontInvert'});if(code&&code.data&&code.data.length>=6)onScan(code.data)}requestAnimationFrame(scanLoop)}
+
+async function onScan(code){if(cooldown||!userId)return;cooldown=true;scanning=false;document.getElementById('loading').classList.add('show');
+try{const r=await fetch('/api/submit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code,user_id:userId})});const d=await r.json();document.getElementById('loading').classList.remove('show');
+if(d.success){count++;document.getElementById('counter').textContent=count;flash('green');toast('+15 pts!','ok');if(navigator.vibrate)navigator.vibrate([30,50,30,50,30])}
+else{if(d.dedup==='local'){flash('yellow');toast('Already scanned!','warn')}else if(d.dedup==='zyn'){flash('yellow');toast('Already used','warn')}else{flash('red');toast(d.message,'err')}}
+}catch(e){document.getElementById('loading').classList.remove('show');flash('red');toast('Connection lost','err')}
+setTimeout(()=>{cooldown=false;scanning=true},COOLDOWN)}
+
+function flash(c){const el=document.getElementById('flash');el.className=c;setTimeout(()=>el.className='',c==='green'?200:500)}
+function toast(m,c){const el=document.getElementById('toast');el.textContent=m;el.className=c;clearTimeout(el._t);el._t=setTimeout(()=>el.className='',2000)}
+</script>
+</body>
+</html>
